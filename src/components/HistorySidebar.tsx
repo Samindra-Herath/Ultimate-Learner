@@ -59,6 +59,13 @@ export default function HistorySidebar({
             const isSelected = guide.id === currentGuideId;
             const isEditing = guide.id === editingId;
 
+            const totalTopics = guide.topics?.length || 0;
+            const completedTopicsCount = guide.progress?.completedTopicIds?.length || 0;
+            const completionPercent = totalTopics > 0 ? Math.round((completedTopicsCount / totalTopics) * 100) : 0;
+
+            const attempts = guide.progress?.examAttempts || [];
+            const latestAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
+
             return (
               <div
                 key={guide.id}
@@ -67,7 +74,7 @@ export default function HistorySidebar({
                 className={`group px-3 py-2.5 rounded-lg transition-all border ${
                   isSelected
                     ? "bg-slate-105 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-indigo-705 dark:text-indigo-400 font-medium"
-                    : "bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-850/60 border-slate-150 dark:border-slate-800 text-slate-650 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+                    : "bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-850/60 border-slate-150 dark:border-slate-800 text-slate-655 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
                 } ${!isEditing ? "cursor-pointer" : "cursor-default"}`}
               >
                 {isEditing ? (
@@ -77,7 +84,7 @@ export default function HistorySidebar({
                       type="text"
                       value={editingText}
                       onChange={(e) => setEditingText(e.target.value)}
-                      className="flex-1 text-xs px-2 py-1 border border-indigo-350 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 font-sans"
+                      className="flex-1 text-xs px-2 py-1 border border-indigo-350 dark:border-slate-700 dark:bg-slate-955 dark:text-slate-100 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 font-sans"
                       autoFocus
                     />
                     <button
@@ -99,7 +106,7 @@ export default function HistorySidebar({
                 ) : (
                   <div className="space-y-1">
                     <div className="flex items-start justify-between gap-1">
-                      <div className="flex items-start gap-2.5 min-w-0">
+                      <div className="flex items-start gap-2.5 min-w-0 flex-1">
                         <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 transition-colors ${
                           isSelected ? "bg-indigo-500" : "bg-slate-300 dark:bg-slate-700 group-hover:bg-indigo-400 dark:group-hover:bg-indigo-500"
                         }`} />
@@ -132,14 +139,33 @@ export default function HistorySidebar({
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-400/90 dark:text-slate-500 pl-4.5">
-                      <span>{guide.topics?.length || 0} topics</span>
-                      <span>
-                        {new Date(guide.createdAt).toLocaleDateString(undefined, {
-                          month: "short",
-                          day: "numeric",
-                        })}
-                      </span>
+                    <div className="flex flex-col gap-1 pl-4.5 pt-0.5">
+                      <div className="flex items-center justify-between text-[10px] font-mono text-slate-400/90 dark:text-slate-500">
+                        <span>{totalTopics} topics • {completionPercent}% done</span>
+                        <span>
+                          {new Date(guide.createdAt).toLocaleDateString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                          })}
+                        </span>
+                      </div>
+                      
+                      {/* Mini Progress Bar */}
+                      {totalTopics > 0 && (
+                        <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-1 mt-0.5">
+                          <div
+                            className="bg-indigo-500 dark:bg-indigo-400 h-1 rounded-full transition-all duration-300"
+                            style={{ width: `${completionPercent}%` }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Latest Quiz Attempt Badge */}
+                      {latestAttempt && (
+                        <div className="flex items-center gap-1 mt-1 text-[9px] font-mono font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
+                          <span>Latest Quiz: {latestAttempt.score}/{latestAttempt.totalQuestions} ({Math.round((latestAttempt.score / latestAttempt.totalQuestions) * 100)}%)</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

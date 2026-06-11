@@ -37,6 +37,20 @@ export interface ExamQuestion {
   explanation: string;
 }
 
+export interface ExamAttempt {
+  id: string;
+  timestamp: string;
+  score: number;
+  totalQuestions: number;
+  userAnswers: Record<string, string>; // questionId -> selectedOption
+}
+
+export interface StudyProgress {
+  completedTopicIds: string[];
+  masteredFlashcardIds: string[];
+  examAttempts: ExamAttempt[];
+}
+
 export interface StudyGuide {
   id: string;
   title: string;
@@ -46,4 +60,5 @@ export interface StudyGuide {
   flashcards: Flashcard[];
   practiceExam: ExamQuestion[];
   quickSummary: string;
+  progress?: StudyProgress; // Added progress history tracking field
 }

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Sparkles, Plus, GraduationCap, AlertCircle, BookOpen, Clock, Heart, ArrowLeft, Lightbulb, Sun, Moon } from "lucide-react";
-import { StudyGuide, StudySource } from "./types";
+import { StudyGuide, StudySource, StudyProgress } from "./types";
 import UploadSection from "./components/UploadSection";
 import StudyNoteViewer from "./components/StudyNoteViewer";
 import HistorySidebar from "./components/HistorySidebar";
@@ -59,6 +59,19 @@ export default function App() {
               id: eq.id || `question-${idx}-${generateUUID().slice(0, 8)}`,
             }));
           }
+          if (!updated.progress) {
+            updated.progress = {
+              completedTopicIds: [],
+              masteredFlashcardIds: [],
+              examAttempts: [],
+            };
+          } else {
+            updated.progress = {
+              completedTopicIds: updated.progress.completedTopicIds || [],
+              masteredFlashcardIds: updated.progress.masteredFlashcardIds || [],
+              examAttempts: updated.progress.examAttempts || [],
+            };
+          }
           return updated;
         });
         setHistory(parsed);
@@ -79,6 +92,16 @@ export default function App() {
     } catch (e) {
       console.error("Failed to persist study guides history:", e);
     }
+  };
+
+  const handleUpdateProgress = (guideId: string, progress: StudyProgress) => {
+    const updatedHistory = history.map((g) => {
+      if (g.id === guideId) {
+        return { ...g, progress };
+      }
+      return g;
+    });
+    saveHistory(updatedHistory);
   };
 
   // Rotating loading captions
@@ -160,6 +183,13 @@ export default function App() {
           id: eq.id || `question-${idx}-${generateUUID().slice(0, 8)}`,
         }));
       }
+
+      // Initialize empty progress for newly generated guides
+      generatedGuide.progress = {
+        completedTopicIds: [],
+        masteredFlashcardIds: [],
+        examAttempts: [],
+      };
 
       // Add to beginning of history list
       const updatedHistory = [generatedGuide, ...history];
@@ -448,7 +478,7 @@ export default function App() {
                       </p>
                     </div>
 
-                    <StudyNoteViewer guide={activeGuide} />
+                    <StudyNoteViewer guide={activeGuide} onUpdateProgress={handleUpdateProgress} />
                   </div>
 
                 </div>

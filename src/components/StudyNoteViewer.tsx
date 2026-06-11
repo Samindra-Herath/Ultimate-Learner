@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Download,
   BookOpen,
@@ -15,6 +15,7 @@ import {
   EyeOff,
   Maximize2,
   Minimize2,
+  History,
 } from "lucide-react";
 import { StudyGuide, TopicDetails, Flashcard, ExamQuestion } from "../types";
 import { exportStudyGuideToPDF } from "../utils/pdfExporter";
@@ -22,13 +23,13 @@ import MarkdownRenderer from "./MarkdownRenderer";
 
 interface StudyNoteViewerProps {
   guide: StudyGuide;
+  onUpdateProgress: (guideId: string, progress: any) => void;
 }
 
-export default function StudyNoteViewer({ guide }: StudyNoteViewerProps) {
+export default function StudyNoteViewer({ guide, onUpdateProgress }: StudyNoteViewerProps) {
   const [activeTab, setActiveTab] = useState<"notes" | "flashcards" | "exam">("notes");
   
   // Topic and Checklists progress tracking
-  const [completedTopics, setCompletedTopics] = useState<Record<string, boolean>>({});
   const [selectedTopic, setSelectedTopic] = useState<TopicDetails | null>(
     guide.topics && guide.topics.length > 0 ? guide.topics[0] : null
   );
@@ -42,28 +43,64 @@ export default function StudyNoteViewer({ guide }: StudyNoteViewerProps) {
   // Flashcards state
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
+  const [onlyShowUnmasteredFlashcards, setOnlyShowUnmasteredFlashcards] = useState(false);
 
   // Practice Exam state
   const [userAnswers, setUserAnswers] = useState<Record<string, string>>({});
   const [examSubmitted, setExamSubmitted] = useState(false);
   const [score, setScore] = useState(0);
+  const [selectedAttemptId, setSelectedAttemptId] = useState<string | null>(null);
 
-  // Calculate syllabus coverage
+  // Sync guide state
+  useEffect(() => {
+    setSelectedTopic(guide.topics && guide.topics.length > 0 ? guide.topics[0] : null);
+    setCurrentCardIndex(0);
+    setIsFlipped(false);
+    setUserAnswers({});
+    setExamSubmitted(false);
+    setScore(0);
+    setSelectedAttemptId(null);
+  }, [guide.id]);
+
+  const completedTopicIds = guide.progress?.completedTopicIds || [];
   const totalTopics = guide.topics?.length || 0;
-  const completedCount = Object.values(completedTopics).filter(Boolean).length;
+  const completedCount = completedTopicIds.length;
   const coveragePercent = totalTopics > 0 ? Math.round((completedCount / totalTopics) * 100) : 0;
 
   const toggleTopicCompleted = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setCompletedTopics((prev) => ({
-      ...prev,
-      [id]: !prev[id],
-    }));
+    const currentCompleted = guide.progress?.completedTopicIds || [];
+    const isCompleted = currentCompleted.includes(id);
+    const updatedCompleted = isCompleted
+      ? currentCompleted.filter((tid) => tid !== id)
+      : [...currentCompleted, id];
+
+    onUpdateProgress(guide.id, {
+      ...guide.progress,
+      completedTopicIds: updatedCompleted,
+      masteredFlashcardIds: guide.progress?.masteredFlashcardIds || [],
+      examAttempts: guide.progress?.examAttempts || [],
+    });
   };
 
   const handleSelectTopic = (topic: TopicDetails) => {
     setSelectedTopic(topic);
     setIsFlipped(false);
+  };
+
+  const toggleFlashcardMastered = (cardId: string) => {
+    const currentMastered = guide.progress?.masteredFlashcardIds || [];
+    const isMastered = currentMastered.includes(cardId);
+    const updatedMastered = isMastered
+      ? currentMastered.filter((cid) => cid !== cardId)
+      : [...currentMastered, cardId];
+
+    onUpdateProgress(guide.id, {
+      ...guide.progress,
+      completedTopicIds: guide.progress?.completedTopicIds || [],
+      masteredFlashcardIds: updatedMastered,
+      examAttempts: guide.progress?.examAttempts || [],
+    });
   };
 
   // Exam handlers
@@ -84,13 +121,51 @@ export default function StudyNoteViewer({ guide }: StudyNoteViewerProps) {
     });
     setScore(corrCount);
     setExamSubmitted(true);
+    setSelectedAttemptId(null);
+
+    // Record the attempt
+    const newAttempt = {
+      id: `attempt-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      score: corrCount,
+      totalQuestions: guide.practiceExam.length,
+      userAnswers: { ...userAnswers },
+    };
+
+    const currentAttempts = guide.progress?.examAttempts || [];
+    onUpdateProgress(guide.id, {
+      ...guide.progress,
+      completedTopicIds: guide.progress?.completedTopicIds || [],
+      masteredFlashcardIds: guide.progress?.masteredFlashcardIds || [],
+      examAttempts: [...currentAttempts, newAttempt],
+    });
   };
 
   const handleResetExam = () => {
     setUserAnswers({});
     setExamSubmitted(false);
     setScore(0);
+    setSelectedAttemptId(null);
   };
+
+  // Flashcards filtered list
+  const masteredFlashcardIds = guide.progress?.masteredFlashcardIds || [];
+  const filteredFlashcards = onlyShowUnmasteredFlashcards
+    ? (guide.flashcards || []).filter((fc) => !masteredFlashcardIds.includes(fc.id))
+    : (guide.flashcards || []);
+
+  const activeCardIndex = Math.min(currentCardIndex, Math.max(0, filteredFlashcards.length - 1));
+
+  // Exam display values (loads from selected attempt history if reviewing)
+  const displayedAnswers = selectedAttemptId
+    ? (guide.progress?.examAttempts?.find((a) => a.id === selectedAttemptId)?.userAnswers || {})
+    : userAnswers;
+
+  const displaysAsSubmitted = examSubmitted || !!selectedAttemptId;
+
+  const displayedScore = selectedAttemptId
+    ? (guide.progress?.examAttempts?.find((a) => a.id === selectedAttemptId)?.score || 0)
+    : score;
 
   return (
     <div id="study-note-viewer" className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -127,7 +202,7 @@ export default function StudyNoteViewer({ guide }: StudyNoteViewerProps) {
           <div id="topic-checklist" className="space-y-1.5 max-h-[50vh] overflow-y-auto pr-1">
             {guide.topics?.map((topic, i) => {
               const isSelected = selectedTopic?.id === topic.id;
-              const isDone = completedTopics[topic.id];
+              const isDone = completedTopicIds.includes(topic.id);
               return (
                 <div
                   key={topic.id}
@@ -355,12 +430,12 @@ export default function StudyNoteViewer({ guide }: StudyNoteViewerProps) {
                         id="mark-comprehended"
                         onClick={(e) => toggleTopicCompleted(selectedTopic.id, e)}
                         className={`text-xs font-bold px-4 py-2 rounded-lg border transition-all cursor-pointer ${
-                          completedTopics[selectedTopic.id]
+                          completedTopicIds.includes(selectedTopic.id)
                             ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900/40 text-emerald-700 dark:text-emerald-400"
-                            : "bg-white dark:bg-slate-950 hover:bg-slate-50 dark:hover:bg-slate-800 border-slate-205 dark:border-slate-800 text-slate-600 dark:text-slate-400"
+                            : "bg-white dark:bg-slate-950 hover:bg-slate-50 dark:hover:bg-slate-800 border-slate-205 dark:border-slate-800 text-slate-655 dark:text-slate-400"
                         }`}
                       >
-                        {completedTopics[selectedTopic.id] ? "✓ Concept Mastered" : "Mark Mastered"}
+                        {completedTopicIds.includes(selectedTopic.id) ? "✓ Concept Mastered" : "Mark Mastered"}
                       </button>
                     </div>
                   </div>
@@ -438,93 +513,183 @@ export default function StudyNoteViewer({ guide }: StudyNoteViewerProps) {
           {activeTab === "flashcards" && guide.flashcards && guide.flashcards.length > 0 && (
             <div className="max-w-xl mx-auto space-y-6 flex flex-col items-center">
               
-              <div className="text-center">
+              <div className="text-center w-full space-y-3">
                 <h3 className="font-display font-bold text-slate-800 dark:text-slate-105 text-lg md:text-xl">
                   Active-Recall Flashcards
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   Click the card to Flip between term/concept and detailed answer
                 </p>
-              </div>
 
-              {/* Realistic Flashcard Box */}
-              <div
-                id="interactive-flashcard"
-                onClick={() => setIsFlipped(!isFlipped)}
-                className="w-full aspect-[1.6/1] cursor-pointer relative group perspective"
-              >
-                <div
-                  className={`w-full h-full duration-500 preserve-3d relative ${
-                    isFlipped ? "rotate-y-180" : ""
-                  }`}
-                >
-                  
-                  {/* card front */}
-                  <div className="absolute inset-0 w-full h-full backface-hidden bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 rounded-2xl p-8 flex flex-col justify-between shadow-md group-hover:border-indigo-400 transition-colors">
-                    <div className="flex justify-between items-center text-[10px] font-mono text-indigo-650 dark:text-indigo-400 font-semibold tracking-wider uppercase">
-                      <span>Interactive Recall</span>
-                      <span>Card {currentCardIndex + 1} of {guide.flashcards.length}</span>
-                    </div>
-                    <div className="text-center font-display font-bold text-slate-805 dark:text-slate-100 text-lg md:text-xl px-4 select-none">
-                      {guide.flashcards[currentCardIndex]?.front}
-                    </div>
-                    <div className="text-center text-[11px] font-mono text-slate-400 dark:text-slate-500">
-                      Click to flip & read solution
-                    </div>
+                {/* Flashcard Progress Bar */}
+                <div className="max-w-xs mx-auto space-y-1">
+                  <div className="w-full bg-slate-100 dark:bg-slate-850 rounded-full h-1.5 border border-slate-200/20">
+                    <div
+                      className="bg-emerald-500 h-1.5 rounded-full transition-all duration-300"
+                      style={{
+                        width: `${guide.flashcards.length ? Math.round((masteredFlashcardIds.length / guide.flashcards.length) * 100) : 0}%`
+                      }}
+                    />
                   </div>
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 font-mono uppercase font-bold tracking-wide">
+                    {masteredFlashcardIds.length} / {guide.flashcards.length} Cards Mastered
+                  </p>
+                </div>
 
-                  {/* card back */}
-                  <div className="absolute inset-0 w-full h-full backface-hidden rotate-y-180 bg-slate-800 dark:bg-slate-955 text-white rounded-2xl p-8 flex flex-col justify-between shadow-lg">
-                    <div className="flex justify-between items-center text-[10px] font-mono text-indigo-355 dark:text-indigo-400 font-semibold tracking-wider uppercase">
-                      <span>Concept Verified</span>
-                      <span>Card {currentCardIndex + 1} of {guide.flashcards.length}</span>
-                    </div>
-                    <div className="overflow-y-auto max-h-[140px] text-center font-sans font-medium text-slate-202 dark:text-slate-300 text-sm md:text-base px-2 py-1 leading-relaxed selection:bg-indigo-600">
-                      {guide.flashcards[currentCardIndex]?.back}
-                    </div>
-                    <div className="text-center text-[11px] font-mono text-slate-450 dark:text-slate-500">
-                      Click to flip back
-                    </div>
-                  </div>
-
+                {/* Filter Toggle */}
+                <div className="flex items-center justify-center gap-2 pt-1 select-none">
+                  <input
+                    id="filter-unmastered-cards"
+                    type="checkbox"
+                    checked={onlyShowUnmasteredFlashcards}
+                    onChange={(e) => {
+                      setOnlyShowUnmasteredFlashcards(e.target.checked);
+                      setCurrentCardIndex(0);
+                      setIsFlipped(false);
+                    }}
+                    className="rounded border-slate-350 dark:border-slate-700 text-indigo-600 focus:ring-indigo-550 w-3.5 h-3.5 cursor-pointer"
+                  />
+                  <label htmlFor="filter-unmastered-cards" className="text-xs font-semibold text-slate-655 dark:text-slate-400 cursor-pointer">
+                    Review only cards needing study ({guide.flashcards.length - masteredFlashcardIds.length} left)
+                  </label>
                 </div>
               </div>
 
-              {/* Controllers */}
-              <div className="flex items-center gap-4">
-                <button
-                  id="prev-card-btn"
-                  disabled={currentCardIndex === 0}
-                  onClick={() => {
-                    setIsFlipped(false);
-                    setTimeout(() => setCurrentCardIndex((prev) => Math.max(0, prev - 1)), 150);
-                  }}
-                  className="px-4 py-2 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 border border-slate-205 dark:border-slate-800 text-xs font-bold text-slate-650 dark:text-slate-300 disabled:opacity-40 rounded-xl transition-all cursor-pointer"
-                >
-                  Previous
-                </button>
-                <span className="font-mono text-xs text-slate-505 dark:text-slate-405 font-semibold">
-                  {currentCardIndex + 1} / {guide.flashcards.length}
-                </span>
-                <button
-                  id="next-card-btn"
-                  disabled={currentCardIndex === guide.flashcards.length - 1}
-                  onClick={() => {
-                    setIsFlipped(false);
-                    setTimeout(() => setCurrentCardIndex((prev) => Math.min(guide.flashcards.length - 1, prev + 1)), 150);
-                  }}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white disabled:opacity-40 rounded-xl transition-all cursor-pointer"
-                >
-                  Next Card
-                </button>
-              </div>
+              {filteredFlashcards.length === 0 ? (
+                <div className="py-12 px-6 text-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-md shadow-sm space-y-4">
+                  <Award className="w-10 h-10 text-emerald-500 mx-auto" />
+                  <div className="space-y-1">
+                    <h4 className="font-bold text-slate-800 dark:text-slate-100 text-sm">All Cards Mastered! 🏆</h4>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Great job! You have marked all flashcards in this study guide as mastered.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setOnlyShowUnmasteredFlashcards(false);
+                      setCurrentCardIndex(0);
+                    }}
+                    className="px-4 py-2 bg-indigo-650 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-sm"
+                  >
+                    Show All Cards
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {/* Realistic Flashcard Box */}
+                  <div
+                    id="interactive-flashcard"
+                    onClick={() => setIsFlipped(!isFlipped)}
+                    className="w-full aspect-[1.6/1] cursor-pointer relative group perspective"
+                  >
+                    <div
+                      className={`w-full h-full duration-500 preserve-3d relative ${
+                        isFlipped ? "rotate-y-180" : ""
+                      }`}
+                    >
+                      {/* card front */}
+                      <div className="absolute inset-0 w-full h-full backface-hidden bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 rounded-2xl p-8 flex flex-col justify-between shadow-md group-hover:border-indigo-400 transition-colors">
+                        <div className="flex justify-between items-center text-[10px] font-mono text-indigo-650 dark:text-indigo-400 font-semibold tracking-wider uppercase">
+                          <span>Interactive Recall</span>
+                          <span>Card {activeCardIndex + 1} of {filteredFlashcards.length}</span>
+                        </div>
+                        <div className="text-center font-display font-bold text-slate-855 dark:text-slate-100 text-lg md:text-xl px-4 select-none">
+                          {filteredFlashcards[activeCardIndex]?.front}
+                        </div>
+                        <div className="text-center text-[11px] font-mono text-slate-400 dark:text-slate-500">
+                          Click to flip & read solution
+                        </div>
+                      </div>
+
+                      {/* card back */}
+                      <div className="absolute inset-0 w-full h-full backface-hidden rotate-y-180 bg-slate-800 dark:bg-slate-955 text-white rounded-2xl p-8 flex flex-col justify-between shadow-lg">
+                        <div className="flex justify-between items-center text-[10px] font-mono text-indigo-355 dark:text-indigo-400 font-semibold tracking-wider uppercase">
+                          <span>Concept Verified</span>
+                          <span>Card {activeCardIndex + 1} of {filteredFlashcards.length}</span>
+                        </div>
+                        <div className="overflow-y-auto max-h-[140px] text-center font-sans font-medium text-slate-202 dark:text-slate-300 text-sm md:text-base px-2 py-1 leading-relaxed selection:bg-indigo-600">
+                          {filteredFlashcards[activeCardIndex]?.back}
+                        </div>
+                        <div className="text-center text-[11px] font-mono text-slate-450 dark:text-slate-500">
+                          Click to flip back
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Mastery controls */}
+                  <div className="flex gap-3 w-full justify-center">
+                    {masteredFlashcardIds.includes(filteredFlashcards[activeCardIndex].id) ? (
+                      <button
+                        onClick={() => toggleFlashcardMastered(filteredFlashcards[activeCardIndex].id)}
+                        className="px-3.5 py-2 border border-amber-300 dark:border-amber-700/50 bg-amber-50 dark:bg-amber-955/20 text-amber-700 dark:text-amber-400 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all hover:bg-amber-100 dark:hover:bg-amber-950/40"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        Mark Needs Review
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => toggleFlashcardMastered(filteredFlashcards[activeCardIndex].id)}
+                        className="px-3.5 py-2 border border-emerald-300 dark:border-emerald-700/50 bg-emerald-50 dark:bg-emerald-955/20 text-emerald-700 dark:text-emerald-450 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all hover:bg-emerald-100 dark:hover:bg-emerald-950/40"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Mark as Mastered
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Controllers */}
+                  <div className="flex items-center gap-4 pt-1">
+                    <button
+                      id="prev-card-btn"
+                      disabled={activeCardIndex === 0}
+                      onClick={() => {
+                        setIsFlipped(false);
+                        setTimeout(() => setCurrentCardIndex((prev) => Math.max(0, prev - 1)), 150);
+                      }}
+                      className="px-4 py-2 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 border border-slate-205 dark:border-slate-800 text-xs font-bold text-slate-650 dark:text-slate-300 disabled:opacity-40 rounded-xl transition-all cursor-pointer shadow-sm"
+                    >
+                      Previous
+                    </button>
+                    <span className="font-mono text-xs text-slate-505 dark:text-slate-405 font-semibold">
+                      {activeCardIndex + 1} / {filteredFlashcards.length}
+                    </span>
+                    <button
+                      id="next-card-btn"
+                      disabled={activeCardIndex === filteredFlashcards.length - 1}
+                      onClick={() => {
+                        setIsFlipped(false);
+                        setTimeout(() => setCurrentCardIndex((prev) => Math.min(filteredFlashcards.length - 1, prev + 1)), 150);
+                      }}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white disabled:opacity-40 rounded-xl transition-all cursor-pointer shadow-sm"
+                    >
+                      Next Card
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           )}
 
-          {/* TAB 3: SELF-GRADING PRACTICE EXAM */}
+                   {/* TAB 3: SELF-GRADING PRACTICE EXAM */}
           {activeTab === "exam" && guide.practiceExam && guide.practiceExam.length > 0 && (
             <div className="space-y-6">
               
+              {selectedAttemptId && (
+                <div className="p-4 bg-amber-50 dark:bg-amber-955/20 border border-amber-205 dark:border-amber-900/40 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-sm transition-all duration-300">
+                  <span className="font-semibold text-amber-800 dark:text-amber-400 flex items-center gap-1.5">
+                    <History className="w-4 h-4 text-amber-600 dark:text-amber-500 animate-spin-once" />
+                    Reviewing past attempt score: <strong className="text-sm font-bold font-mono">{displayedScore} / {guide.practiceExam.length}</strong> (taken on {new Date(guide.progress?.examAttempts?.find(a => a.id === selectedAttemptId)?.timestamp || "").toLocaleString()})
+                  </span>
+                  <button
+                    onClick={() => setSelectedAttemptId(null)}
+                    className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl cursor-pointer transition-colors shadow-sm text-center"
+                  >
+                    Exit Review
+                  </button>
+                </div>
+              )}
+
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
                 <div>
                   <h3 className="font-display font-bold text-slate-805 dark:text-slate-100 text-lg md:text-xl">
@@ -534,23 +699,25 @@ export default function StudyNoteViewer({ guide }: StudyNoteViewerProps) {
                     Test your syllabus comprehension. Complete all questions, then click Submit to view your grade and solutions.
                   </p>
                 </div>
-                {examSubmitted ? (
+                {displaysAsSubmitted ? (
                   <div className="flex items-center gap-3">
                     <span className={`px-3 py-1.5 font-mono font-bold text-sm rounded-lg ${
-                      score >= guide.practiceExam.length * 0.7
-                        ? "bg-emerald-50 dark:bg-emerald-955/20 text-emerald-700 dark:text-emerald-400"
-                        : "bg-amber-50 dark:bg-amber-955/20 text-amber-700 dark:text-amber-400"
+                      displayedScore >= guide.practiceExam.length * 0.7
+                        ? "bg-emerald-50 dark:bg-emerald-955/20 text-emerald-700 dark:text-emerald-450"
+                        : "bg-amber-50 dark:bg-amber-955/20 text-amber-700 dark:text-amber-450"
                     }`}>
-                      YOUR SCORE: {score} / {guide.practiceExam.length} ({Math.round((score / guide.practiceExam.length) * 105)}%)
+                      YOUR SCORE: {displayedScore} / {guide.practiceExam.length} ({Math.round((displayedScore / guide.practiceExam.length) * 100)}%)
                     </span>
-                    <button
-                      id="reset-exam-btn"
-                      onClick={handleResetExam}
-                      className="p-2 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-201 dark:border-slate-800 text-slate-650 dark:text-slate-300 rounded-xl transition-colors cursor-pointer"
-                      title="Reset Exam"
-                    >
-                      <RefreshCw className="w-4 h-4" />
-                    </button>
+                    {!selectedAttemptId && (
+                      <button
+                        id="reset-exam-btn"
+                        onClick={handleResetExam}
+                        className="p-2 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-201 dark:border-slate-800 text-slate-655 dark:text-slate-300 rounded-xl transition-colors cursor-pointer"
+                        title="Reset Exam"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <button
@@ -567,7 +734,7 @@ export default function StudyNoteViewer({ guide }: StudyNoteViewerProps) {
               {/* Questions Stream */}
               <div className="space-y-6">
                 {guide.practiceExam.map((q, idx) => {
-                  const userAnswer = userAnswers[q.id];
+                  const userAnswer = displayedAnswers[q.id];
                   const hasAnswered = !!userAnswer;
                   return (
                     <div
@@ -579,7 +746,7 @@ export default function StudyNoteViewer({ guide }: StudyNoteViewerProps) {
                         <span className="w-5 h-5 rounded bg-indigo-50 dark:bg-indigo-950/40 text-indigo-750 dark:text-indigo-400 font-bold font-mono text-xs flex items-center justify-center shrink-0 mt-0.5">
                           {idx + 1}
                         </span>
-                        <h4 className="font-sans font-bold text-slate-800 dark:text-slate-100 text-sm leading-relaxed">
+                        <h4 className="font-sans font-bold text-slate-805 dark:text-slate-100 text-sm leading-relaxed">
                           {q.question}
                         </h4>
                       </div>
@@ -592,14 +759,14 @@ export default function StudyNoteViewer({ guide }: StudyNoteViewerProps) {
                           
                           let optStyle = "border-slate-200 dark:border-slate-800 hover:border-slate-350 dark:hover:border-slate-700 bg-slate-50/20 dark:bg-slate-950/20 dark:text-slate-350";
                           if (isOptionSelected) {
-                            optStyle = "border-indigo-600 dark:border-indigo-500 bg-indigo-50/30 dark:bg-indigo-950/40 font-semibold dark:text-white";
+                            optStyle = "border-indigo-600 dark:border-indigo-500 bg-indigo-55/30 dark:bg-indigo-950/40 font-semibold dark:text-white";
                           }
 
-                          if (examSubmitted) {
+                          if (displaysAsSubmitted) {
                             if (isCorrectOpt) {
                               optStyle = "border-emerald-500 dark:border-emerald-600 bg-emerald-50/40 dark:bg-emerald-950/30 text-emerald-805 dark:text-emerald-400 font-bold ring-2 ring-emerald-100 dark:ring-emerald-950/40";
                             } else if (isOptionSelected) {
-                              optStyle = "border-red-400 dark:border-red-650 bg-red-50/40 dark:bg-red-950/30 text-red-750 dark:text-red-405 font-semibold";
+                              optStyle = "border-red-400 dark:border-red-650 bg-red-50/40 dark:bg-red-950/30 text-red-755 dark:text-red-405 font-semibold";
                             } else {
                               optStyle = "border-slate-105 dark:border-slate-850 bg-slate-50/5 dark:bg-slate-950/5 opacity-60";
                             }
@@ -609,10 +776,10 @@ export default function StudyNoteViewer({ guide }: StudyNoteViewerProps) {
                             <button
                               key={optIdx}
                               id={`q-${q.id}-opt-${optIdx}`}
-                              disabled={examSubmitted}
+                              disabled={displaysAsSubmitted}
                               onClick={() => handleAnswerSelect(q.id, opt)}
                               className={`p-3.5 rounded-xl border text-left text-xs transition-all relative flex items-center gap-3 ${
-                                !examSubmitted ? "cursor-pointer" : "cursor-default"
+                                !displaysAsSubmitted ? "cursor-pointer" : "cursor-default"
                               } ${optStyle}`}
                             >
                               <span className={`w-5 h-5 rounded-full text-[10px] font-bold font-mono flex items-center justify-center border shrink-0 ${
@@ -629,7 +796,7 @@ export default function StudyNoteViewer({ guide }: StudyNoteViewerProps) {
                       </div>
 
                       {/* Solutions and Explanations revealed after submission */}
-                      {examSubmitted && (
+                      {displaysAsSubmitted && (
                         <div className="mt-4 pl-8 pt-4 border-t border-slate-100 dark:border-slate-800 space-y-2">
                           <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
                             <CheckCircle2 className="w-4 h-4" />
@@ -652,6 +819,62 @@ export default function StudyNoteViewer({ guide }: StudyNoteViewerProps) {
                   );
                 })}
               </div>
+
+              {/* Past Attempts History Section */}
+              {guide.progress?.examAttempts && guide.progress.examAttempts.length > 0 && (
+                <div className="mt-8 pt-6 border-t border-slate-150 dark:border-slate-800 space-y-4">
+                  <h4 className="font-display font-bold text-slate-800 dark:text-slate-200 text-sm flex items-center gap-1.5">
+                    <History className="w-4 h-4 text-indigo-500" />
+                    Exam Performance History
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {guide.progress.examAttempts.map((attempt, idx) => {
+                      const isReviewing = attempt.id === selectedAttemptId;
+                      const scorePct = Math.round((attempt.score / attempt.totalQuestions) * 100);
+                      
+                      return (
+                        <div
+                          key={attempt.id}
+                          onClick={() => {
+                            setSelectedAttemptId(isReviewing ? null : attempt.id);
+                            if (!isReviewing) {
+                              setExamSubmitted(false);
+                            }
+                          }}
+                          className={`p-3.5 rounded-xl border transition-all cursor-pointer shadow-sm text-left flex flex-col justify-between gap-2.5 ${
+                            isReviewing
+                              ? "border-indigo-600 bg-indigo-50/20 dark:bg-indigo-950/35"
+                              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-805 hover:border-slate-350 dark:hover:border-slate-700"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500 font-bold uppercase">
+                              Attempt #{idx + 1}
+                            </span>
+                            <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
+                              scorePct >= 70
+                                ? "bg-emerald-55 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-450 border border-emerald-100 dark:border-emerald-900/50"
+                                : "bg-amber-55 dark:bg-amber-950/20 text-amber-705 dark:text-amber-400 border border-amber-100 dark:border-amber-900/50"
+                            }`}>
+                              {attempt.score}/{attempt.totalQuestions} ({scorePct}%)
+                            </span>
+                          </div>
+                          
+                          <div className="flex items-end justify-between">
+                            <span className="text-[10px] font-mono text-slate-400 dark:text-slate-550">
+                              {new Date(attempt.timestamp).toLocaleDateString()}
+                            </span>
+                            <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold underline">
+                              {isReviewing ? "Exit Review" : "Review Answers"}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
             </div>
           )}
 
